@@ -22,21 +22,17 @@ public:
 	bool recv(char* msg, size_t& length);
 	size_t nextSize();
 	size_t getSizeBytes() const;
+	size_t getFreeMemory();
 
 private:
-	void updateFreeMemory();
-
-	TYPE m_type;
+	TYPE mType;
 
 	HANDLE hMutex;
-
-	char* cBuffer; //Circular buffer
-	size_t* head;
-	size_t* tail;
-
 	HANDLE hFileMap;
+
 	void* mData;
-
+	char* mCircBuffer; //Circular buffer
 	size_t mSize;
-
+	size_t* mHead;
+	size_t* mTail;
 };

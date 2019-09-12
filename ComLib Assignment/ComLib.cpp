@@ -1,7 +1,7 @@
 #include "ComLib.h"
 
 ComLib::ComLib(const std::string& fileMapName, const size_t& buffSize, TYPE type) {
-	m_type = type;
+	mType = type;
 
 	mSize = buffSize << 20; //Converts from megabytes to bytes
 
@@ -22,15 +22,15 @@ ComLib::ComLib(const std::string& fileMapName, const size_t& buffSize, TYPE type
 	}
 
 	mData = MapViewOfFile(hFileMap, FILE_MAP_ALL_ACCESS, 0, 0, mSize); //mData always points to beginning of data
-	cBuffer = (char*)mData;	//Buffer is cast to char* and initialized to beginning of data
+	mCircBuffer = (char*)mData;	//Buffer is cast to char* and initialized to beginning of data
 
-	head = (size_t*)cBuffer;		//Initialize head, first in the buffer
-	tail = ((size_t*)cBuffer + 1);	//Initialize tail, 8 bytes forward in the buffer
+	mHead = (size_t*)mCircBuffer;		//Initialize head, first in the buffer
+	mTail = ((size_t*)mCircBuffer + 1);	//Initialize tail, 8 bytes forward in the buffer
 
 	if (type == PRODUCER) {
 		//The head and the tail are stored first in memory and therefore this offset has to be considered when initialized
-		*head = sizeof(size_t) * 2;
-		*tail = sizeof(size_t) * 2;
+		*mHead = sizeof(size_t) * 2;
+		*mTail = sizeof(size_t) * 2;
 	}
 }
 
@@ -41,46 +41,47 @@ ComLib::~ComLib() {
 }
 
 bool ComLib::send(const void* msg, const size_t length) {
-	if (*tail >= *head && length > 0) {
+	size_t msgSize = length + sizeof(Header);
+
+	size_t padding = 0;
+	if (msgSize % 64 != 0) {
+		size_t multiplier = (size_t)ceil((msgSize / 64.0f)); //See how many times it can be divided by 64, rounds upwards so it'll always be at least 1
+		padding = (64 * multiplier) - msgSize;
+		msgSize += padding;
+	}
+
+	if (getFreeMemory() > msgSize) {
 		WaitForSingleObject(hMutex, INFINITE); //Lock mutex
 
-		size_t msgSize = length + sizeof(Header);
+		if (mSize - *mHead >= msgSize || *mTail > *mHead) {
+			Header header = { length }; //Save neccessary information for the consumer into a header
+			memcpy(mCircBuffer + *mHead, &header, sizeof(Header));
 
-		size_t padding = 0;
-		if (msgSize % 64 != 0) {
-			size_t multiplier = (size_t)ceil((msgSize / 64.0f)); //See how many times it can be divided by 64, rounds upwards so it'll always be at least 1
-			padding = (64 * multiplier) - msgSize;
-			msgSize += padding;
+			memcpy(mCircBuffer + *mHead + sizeof(Header), msg, length);
+
+			*mHead += msgSize;
+
+			ReleaseMutex(hMutex);
+			return true;
 		}
-
-		if (mSize - *head < msgSize) { //If there is no space left for the message in the buffer
+		else if(msgSize < *mTail){
 			Header header = { length }; //We still need to leave a header
-			memcpy(cBuffer + *head, &header, sizeof(Header));
+			memcpy(mCircBuffer + *mHead, &header, sizeof(Header));
 
-			*head = sizeof(size_t) * 2; //Then reset the pointer to the beginning of memory and move on to send the message
+			*mHead = sizeof(size_t) * 2; //Then reset the pointer to the beginning of memory
+			ReleaseMutex(hMutex);
+			return false;
 		}
-
-		Header header = { length }; //Save neccessary information for the consumer into a header
-		memcpy(cBuffer + *head, &header, sizeof(Header));
-
-		memcpy(cBuffer + *head + sizeof(Header), msg, length);
-
-		*head += msgSize;
-
-		//if (*head >= mSize) {
-		//	*head -= mSize;
-		//}
-
-		//std::cout << *head << std::endl; //Debug
-		ReleaseMutex(hMutex);
-		return true;
+		else {
+			return false;
+		}
 	}
 
 	return false;
 }
 
 bool ComLib::recv(char* msg, size_t& length) {
-	if (*tail != *head && length > 0) {
+	if (*mTail != *mHead && length > 0) {
 		WaitForSingleObject(hMutex, INFINITE); //Lock mutex
 
 		size_t msgSize = length + sizeof(Header);
@@ -92,17 +93,13 @@ bool ComLib::recv(char* msg, size_t& length) {
 			msgSize += padding;
 		}
 
-		if (mSize - *tail < msgSize) {
-			*tail = sizeof(size_t) * 2; //Reset the pointer to the beginning of memory
+		if (mSize - *mTail < msgSize) {
+			*mTail = sizeof(size_t) * 2; //Reset the pointer to the beginning of memory
 		}
 
-		memcpy(msg, cBuffer + *tail + sizeof(Header), length);
+		memcpy(msg, mCircBuffer + *mTail + sizeof(Header), length);
 
-		*tail += msgSize;
-
-		//if (*tail >= mSize) {
-		//	*tail -= mSize;
-		//}
+		*mTail += msgSize;
 
 		ReleaseMutex(hMutex);
 		return true;
@@ -112,10 +109,8 @@ bool ComLib::recv(char* msg, size_t& length) {
 }
 
 size_t ComLib::nextSize() {
-	if (*tail != *head) {
-
-		Header* header = (Header*)(cBuffer + *tail);
-
+	if (*mTail != *mHead) {
+		Header* header = (Header*)(mCircBuffer + *mTail);
 		return header->msgSize;
 	}
 	else {
@@ -127,14 +122,19 @@ size_t ComLib::getSizeBytes() const {
 	return this->mSize;
 }
 
-void ComLib::updateFreeMemory() {
-	//if (*head > *tail) {
-	//	freeMemory = mSize - 
-	//}
-	//else if(*head < *tail){
+size_t ComLib::getFreeMemory() {
+	size_t freeMemory;
+	if (*mHead > *mTail) {
+		freeMemory = (mSize - *mHead /*+ *mTail*/) - (sizeof(size_t) * 2);
+	}
+	else if (*mHead < *mTail) {
 
-	//}
-	//else if (*head == *tail) { //The buffer is empty (or full?)
-	//	freeMemory = mSize;
-	//}
+		freeMemory = (*mTail - *mHead) - (sizeof(size_t) * 2);
+	}
+	else {
+
+		freeMemory = mSize;
+	}
+
+	return freeMemory;
 }
