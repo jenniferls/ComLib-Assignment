@@ -41,7 +41,7 @@ ComLib::~ComLib() {
 }
 
 bool ComLib::send(const void* msg, const size_t length) {
-	if (/**head > *tail && */length > 0) {
+	if (*tail >= *head && length > 0) {
 		WaitForSingleObject(hMutex, INFINITE); //Lock mutex
 
 		size_t msgSize = length + sizeof(Header);
@@ -53,11 +53,11 @@ bool ComLib::send(const void* msg, const size_t length) {
 			msgSize += padding;
 		}
 
-		if (mSize - *head < msgSize) { //What about dummy message?
-			Header header = { length };
+		if (mSize - *head < msgSize) { //If there is no space left for the message in the buffer
+			Header header = { length }; //We still need to leave a header
 			memcpy(cBuffer + *head, &header, sizeof(Header));
 
-			*head = sizeof(size_t) * 2; //Reset the pointer to the beginning of memory
+			*head = sizeof(size_t) * 2; //Then reset the pointer to the beginning of memory and move on to send the message
 		}
 
 		Header header = { length }; //Save neccessary information for the consumer into a header
