@@ -50,13 +50,12 @@ int main(int argc, char* argv[]) {
 	}
 
 	if (strcmp(argv[1], "producer") == 0) {
-		//printf("This is a producer app. \n"); //Debug
-
 		ComLib comlib("myFileMap", sizeInMB, ComLib::PRODUCER);
 
+		unsigned int msgCounter = 0;
 		for (size_t i = msgNr; i > 0; i--) {
 			if (random == true) {
-				unsigned int randomNum = rand() % (((sizeInMB / 2) - 1) << 20) + 1; //Place-holder
+				unsigned int randomNum = rand() % (((sizeInMB / 2) - 1) << 20) + 1;
 				msgLength = randomNum;
 			}
 
@@ -66,56 +65,32 @@ int main(int argc, char* argv[]) {
 			while (msgNr == i) { //Will try to send message until it succeeds
 				if (comlib.send(msg, msgLength) == true) {
 					msgNr -= 1;
-					std::cout << /*"Message" <<*//* i + 1 << ": " <<*/ (char*)msg << std::endl;
+					++msgCounter;
+					std::cout << msgCounter << " " << (char*)msg << std::endl;
 					delete msg;
 					Sleep((DWORD)sleepTime);
 				}
 			}
 		}
-
-		//for (size_t i = 0; i < msgNr; i++) {
-		//	if (random == true) {
-		//		unsigned int randomNum = rand() % (((sizeInMB / 2) - 1) << 20); //Place-holder
-		//		msgLength = randomNum;
-		//	}
-
-		//	void* msg = new char[msgLength];
-		//	gen_random((char*)msg, msgLength);
-
-		//	comlib.send(msg, msgLength);
-
-		//	std::cout << /*"Message " << i << ": " << */(char*)msg << std::endl;
-		//	delete[] msg;
-		//}
-		//system("pause");
 	}
 	else if (strcmp(argv[1], "consumer") == 0) {
-		//printf("This is a consumer app. \n"); //Debug
-
 		ComLib comlib("myFileMap", sizeInMB, ComLib::CONSUMER);
 		char* msg;
 
+		unsigned int msgCounter = 0;
 		while (msgNr > 0) {
 			msgLength = comlib.nextSize();
 			if (msgLength > 0) {
 				msg = new char[msgLength];
 				if (comlib.recv(msg, msgLength) == true) {
 					msgNr -= 1;
-					std::cout << /*"Message" << i << ": " << */msg << std::endl;
+					++msgCounter;
+					std::cout << msgCounter << " " << msg << std::endl;
 					delete msg;
 					Sleep((DWORD)sleepTime);
 				}
 			}
 		}
-
-		//for (size_t i = 0; i < msgNr; i++) {
-		//	msgLength = comlib.nextSize();
-		//	char* msg = new char[msgLength];
-		//	comlib.recv(msg, msgLength);
-		//	std::cout << /*"Message" << i << ": " << */msg << std::endl;
-		//	delete[] msg;
-		//}
-		//system("pause");
 	}
 	else {
 		printf("Error! No type. \n");

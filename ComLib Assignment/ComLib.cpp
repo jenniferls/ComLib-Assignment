@@ -44,40 +44,52 @@ bool ComLib::send(const void* msg, const size_t length) {
 	size_t msgSize = length + sizeof(Header);
 
 	size_t padding = 0;
-	if (msgSize % 64 != 0) {
+	if (msgSize % 64 != 0) { //If the mesage size is not a multiple of 64, then add padding
 		size_t multiplier = (size_t)ceil((msgSize / 64.0f)); //See how many times it can be divided by 64, rounds upwards so it'll always be at least 1
 		padding = (64 * multiplier) - msgSize;
 		msgSize += padding;
 	}
 
-	if (getFreeMemory() > msgSize) {
+	if (getFreeMemory() > msgSize) { //Check that there is space in the buffer for the message
 		WaitForSingleObject(hMutex, INFINITE); //Lock mutex
 
-		if (mSize - *mHead >= msgSize || *mTail > *mHead) {
+		//if (msgSize < *mTail) {
+
+		//}
+
+		//if (mSize - *mHead >= msgSize || *mHead < *mTail) { //If the message fits in the buffer, or there is free space between tail and head.
 			Header header = { length }; //Save neccessary information for the consumer into a header
 			memcpy(mCircBuffer + *mHead, &header, sizeof(Header));
 
-			memcpy(mCircBuffer + *mHead + sizeof(Header), msg, length);
+			memcpy(mCircBuffer + *mHead + sizeof(Header), msg, length); //Copy the message (only) and put it after the header
 
 			*mHead += msgSize;
 
 			ReleaseMutex(hMutex);
 			return true;
-		}
-		else if(msgSize < *mTail){
-			Header header = { length }; //We still need to leave a header
-			memcpy(mCircBuffer + *mHead, &header, sizeof(Header));
+		//}
+		//else if(msgSize < *mTail){
+		//	Header header = { length }; //We still need to leave a header
+		//	memcpy(mCircBuffer + *mHead, &header, sizeof(Header));
 
-			*mHead = sizeof(size_t) * 2; //Then reset the pointer to the beginning of memory
-			ReleaseMutex(hMutex);
-			return false;
-		}
-		else {
-			return false;
-		}
+		//	*mHead = sizeof(size_t) * 2; //Then reset the pointer to the beginning of memory
+		//	ReleaseMutex(hMutex);
+		//	return false;
+		//}
+		//else {
+		//	return false;
+		//}
+	}
+	else if (*mHead == *mTail && msgSize < *mHead) {
+		Header header = { length }; //We still need to leave a header
+		memcpy(mCircBuffer + *mHead, &header, sizeof(Header));
+
+		*mHead = sizeof(size_t) * 2; //Then reset the pointer to the beginning of memory
+		ReleaseMutex(hMutex);
+		return false;
 	}
 
-	return false;
+	return false; //If there is no space for the message, it will return false. Wait for consumer to read.
 }
 
 bool ComLib::recv(char* msg, size_t& length) {
@@ -87,17 +99,17 @@ bool ComLib::recv(char* msg, size_t& length) {
 		size_t msgSize = length + sizeof(Header);
 
 		size_t padding = 0;
-		if (msgSize % 64 != 0) {
+		if (msgSize % 64 != 0) { //If the mesage size is not a multiple of 64, then add padding
 			size_t multiplier = (size_t)ceil((msgSize / 64.0f)); //See how many times it can be divided by 64, rounds upwards so it'll always be at least 1
 			padding = (64 * multiplier) - msgSize;
 			msgSize += padding;
 		}
 
-		if (mSize - *mTail < msgSize) {
-			*mTail = sizeof(size_t) * 2; //Reset the pointer to the beginning of memory
+		if (mSize - *mTail < msgSize) { //The message is bigger than the remaining space in the buffer.
+			*mTail = sizeof(size_t) * 2; //Reset the pointer to the beginning of memory. The message is located here instead since it didn't fit.
 		}
 
-		memcpy(msg, mCircBuffer + *mTail + sizeof(Header), length);
+		memcpy(msg, mCircBuffer + *mTail + sizeof(Header), length); //Copy the message (only). It comes after the header
 
 		*mTail += msgSize;
 
@@ -105,7 +117,7 @@ bool ComLib::recv(char* msg, size_t& length) {
 		return true;
 	}
 
-	return false;
+	return false; //Message is either length 0 or the producer has to write more messages
 }
 
 size_t ComLib::nextSize() {
@@ -122,18 +134,27 @@ size_t ComLib::getSizeBytes() const {
 	return this->mSize;
 }
 
-size_t ComLib::getFreeMemory() {
+size_t ComLib::getFreeMemory() { //The math differs depending on where the head and tail are positioned in relation to each other.
 	size_t freeMemory;
-	if (*mHead > *mTail) {
+	if (*mHead > *mTail) { //Head is in front of tail
+		//The whole memory minus as far as the head has written gives the remaining memory.
+		//This is assuming we won't cut messages. If the whole message won't fit into the remaining buffer, we say that there is no space for it.
 		freeMemory = (mSize - *mHead /*+ *mTail*/) - (sizeof(size_t) * 2);
 	}
-	else if (*mHead < *mTail) {
-
+	else if (*mHead < *mTail) { //Head is behind tail
+		//The tail position minus the head position in the buffer gives the remaining memory (basically the gap between them).
 		freeMemory = (*mTail - *mHead) - (sizeof(size_t) * 2);
 	}
-	else {
-
-		freeMemory = mSize;
+	else { //The head and the tail are in the same place.
+		if (*mHead == sizeof(size_t) * 2) {
+			freeMemory = mSize; //The buffer is empty
+		}
+		else if (*mHead == mSize) {
+			freeMemory = 0; //The buffer is full
+		}
+		else {
+			freeMemory = (mSize - *mHead) - (sizeof(size_t) * 2); //There's still space left in the buffer
+		}
 	}
 
 	return freeMemory;
