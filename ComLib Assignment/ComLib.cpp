@@ -3,7 +3,7 @@
 ComLib::ComLib(const std::string& fileMapName, const size_t& buffSize, TYPE type) {
 	mType = type;
 
-	mSize = buffSize << 20; //Converts from megabytes to bytes
+	mSize = buffSize << 10; //Converts from Kilobytes to bytes
 
 	hFileMap = CreateFileMapping(
 		INVALID_HANDLE_VALUE,			//Memory not associated with an existing file
@@ -53,32 +53,15 @@ bool ComLib::send(const void* msg, const size_t length) {
 	if (getFreeMemory() > msgSize) { //Check that there is space in the buffer for the message
 		WaitForSingleObject(hMutex, INFINITE); //Lock mutex
 
-		//if (msgSize < *mTail) {
+		Header header = { length }; //Save neccessary information for the consumer into a header
+		memcpy(mCircBuffer + *mHead, &header, sizeof(Header));
 
-		//}
+		memcpy(mCircBuffer + *mHead + sizeof(Header), msg, length); //Copy the message (only) and put it after the header
 
-		//if (mSize - *mHead >= msgSize || *mHead < *mTail) { //If the message fits in the buffer, or there is free space between tail and head.
-			Header header = { length }; //Save neccessary information for the consumer into a header
-			memcpy(mCircBuffer + *mHead, &header, sizeof(Header));
+		*mHead += msgSize;
 
-			memcpy(mCircBuffer + *mHead + sizeof(Header), msg, length); //Copy the message (only) and put it after the header
-
-			*mHead += msgSize;
-
-			ReleaseMutex(hMutex);
-			return true;
-		//}
-		//else if(msgSize < *mTail){
-		//	Header header = { length }; //We still need to leave a header
-		//	memcpy(mCircBuffer + *mHead, &header, sizeof(Header));
-
-		//	*mHead = sizeof(size_t) * 2; //Then reset the pointer to the beginning of memory
-		//	ReleaseMutex(hMutex);
-		//	return false;
-		//}
-		//else {
-		//	return false;
-		//}
+		ReleaseMutex(hMutex);
+		return true;
 	}
 	else if (*mHead == *mTail && msgSize < *mHead) {
 		Header header = { length }; //We still need to leave a header
@@ -107,6 +90,8 @@ bool ComLib::recv(char* msg, size_t& length) {
 
 		if (mSize - *mTail < msgSize) { //The message is bigger than the remaining space in the buffer.
 			*mTail = sizeof(size_t) * 2; //Reset the pointer to the beginning of memory. The message is located here instead since it didn't fit.
+			ReleaseMutex(hMutex);
+			return false;
 		}
 
 		memcpy(msg, mCircBuffer + *mTail + sizeof(Header), length); //Copy the message (only). It comes after the header

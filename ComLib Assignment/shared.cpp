@@ -75,20 +75,23 @@ int main(int argc, char* argv[]) {
 	}
 	else if (strcmp(argv[1], "consumer") == 0) {
 		ComLib comlib("myFileMap", sizeInMB, ComLib::CONSUMER);
-		char* msg;
 
 		unsigned int msgCounter = 0;
+		unsigned int lastMsgNr = 0;
 		while (msgNr > 0) {
 			msgLength = comlib.nextSize();
 			if (msgLength > 0) {
-				msg = new char[msgLength];
-				if (comlib.recv(msg, msgLength) == true) {
-					msgNr -= 1;
-					++msgCounter;
-					std::cout << msgCounter << " " << msg << std::endl;
-					delete msg;
-					Sleep((DWORD)sleepTime);
+				char* msg = new char[msgLength];
+				while (lastMsgNr == msgCounter) { //Will try to recieve message until it succeeds (to avoid constantly allocating and deleting memory)
+					if (comlib.recv(msg, msgLength) == true) {
+						msgNr -= 1;
+						++msgCounter;
+						std::cout << msgCounter << " " << msg << std::endl;
+						delete msg;
+						Sleep((DWORD)sleepTime);
+					}
 				}
+				++lastMsgNr;
 			}
 		}
 	}
